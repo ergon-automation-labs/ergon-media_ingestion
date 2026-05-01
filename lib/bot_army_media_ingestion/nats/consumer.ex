@@ -4,7 +4,6 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
 
   alias BotArmyMediaIngestion.YouTube.Transcript
 
-  @version Mix.Project.config()[:version]
   @registry_heartbeat_ms 20_000
   @subject "media.ingestion.youtube.transcript.get"
 
@@ -22,7 +21,7 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
   def init(_opts) do
     with {:ok, conn} <- GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5_000),
          {:ok, sub} <- Gnat.sub(conn, self(), @subject) do
-      BotArmyRuntime.Registry.register("media_ingestion", @subjects, @version)
+      BotArmyRuntime.Registry.register("media_ingestion", @subjects, app_version())
       Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
 
       {:ok, %{conn: conn, sub: sub, registry_registered?: true}}
@@ -53,7 +52,7 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
   @impl true
   def handle_info(:registry_heartbeat, state) do
     if state.registry_registered? do
-      BotArmyRuntime.Registry.register("media_ingestion", @subjects, @version)
+      BotArmyRuntime.Registry.register("media_ingestion", @subjects, app_version())
       Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
     end
 
@@ -91,6 +90,14 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
 
       {:error, reason} ->
         Logger.warning("[MediaIngestion] Failed reply publish: #{inspect(reason)}")
+    end
+  end
+
+  defp app_version do
+    case Application.spec(:bot_army_media_ingestion, :vsn) do
+      nil -> "unknown"
+      vsn when is_list(vsn) -> to_string(vsn)
+      vsn -> "#{vsn}"
     end
   end
 end

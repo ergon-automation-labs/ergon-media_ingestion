@@ -3,8 +3,12 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   Fetches YouTube transcript text and optional metadata.
   """
 
+  require Logger
+
   @default_transcript_endpoint "https://youtubetranscript.com/?server_vid2="
   @default_oembed_endpoint "https://www.youtube.com/oembed?format=json&url="
+  @default_store_mode "markdown"
+  @default_include_full_text true
 
   @spec fetch(map()) :: {:ok, map()} | {:error, String.t()}
   def fetch(params) when is_map(params) do
@@ -29,7 +33,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
           result
         end
 
-      {:ok, result}
+      maybe_persist(result, params)
     end
   end
 
@@ -224,6 +228,130 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
       {:error, reason} ->
         {:error, inspect(reason)}
+    end
+  end
+
+  defp maybe_persist(result, params) do
+    if should_persist?(params) do
+      case persist_transcript_markdown(result, params) do
+        {:ok, metadata} ->
+          {:ok, Map.merge(result, metadata)}
+
+        {:error, reason} ->
+          Logger.warning("[MediaIngestion.YouTube] transcript persistence failed: #{reason}")
+          {:error, "transcript persistence failed: #{reason}"}
+      end
+    else
+      {:ok, Map.put(result, "stored", false)}
+    end
+  end
+
+  defp should_persist?(params) do
+    case Map.get(params, "persist") do
+      true -> true
+      false -> false
+      _ -> env_enabled?("MEDIA_INGESTION_TRANSCRIPT_STORE_ENABLED")
+    end
+  end
+
+  defp persist_transcript_markdown(result, params) do
+    root = System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_ROOT", "")
+    mode = System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_MODE", @default_store_mode)
+
+    include_full_text =
+      env_bool("MEDIA_INGESTION_TRANSCRIPT_INCLUDE_FULL_TEXT", @default_include_full_text)
+
+    max_chars =
+      case System.get_env("MEDIA_INGESTION_TRANSCRIPT_MAX_CHARS") do
+        nil -> nil
+        raw -> normalize_max_chars(parse_int(raw))
+      end
+
+    cond do
+      String.trim(root) == "" ->
+        {:error, "MEDIA_INGESTION_TRANSCRIPT_STORE_ROOT not configured"}
+
+      mode != "markdown" ->
+        {:error, "unsupported store mode: #{mode}"}
+
+      true ->
+        filename = build_filename(result)
+        path = Path.join(root, filename)
+        body = build_markdown_body(result, params, include_full_text, max_chars)
+
+        with :ok <- File.mkdir_p(root),
+             :ok <- File.write(path, body) do
+          {:ok,
+           %{
+             "stored" => true,
+             "stored_path" => path,
+             "stored_bytes" => byte_size(body)
+           }}
+        end
+    end
+  end
+
+  defp build_filename(result) do
+    video_id = Map.get(result, "video_id", "unknown")
+    timestamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%dT%H%M%SZ")
+    "#{timestamp}_#{video_id}.md"
+  end
+
+  defp build_markdown_body(result, params, include_full_text, max_chars) do
+    metadata = Map.get(result, "video_metadata", %{})
+    transcript_text = Map.get(result, "transcript_text", "")
+
+    transcript_text =
+      cond do
+        include_full_text and is_integer(max_chars) -> truncate_text(transcript_text, max_chars)
+        include_full_text -> transcript_text
+        is_integer(max_chars) -> truncate_text(transcript_text, max_chars)
+        true -> truncate_text(transcript_text, 5_000)
+      end
+
+    summary =
+      if transcript_text == "" do
+        "(empty transcript)"
+      else
+        truncate_text(String.replace(transcript_text, "\n", " "), 400)
+      end
+
+    """
+    ---
+    source_url: #{Map.get(result, "youtube_url", "")}
+    video_id: #{Map.get(result, "video_id", "")}
+    title: #{Map.get(metadata, "title", "")}
+    channel: #{Map.get(metadata, "channel", "")}
+    provider: #{Map.get(metadata, "provider", "")}
+    fetched_at: #{DateTime.utc_now() |> DateTime.to_iso8601()}
+    language: #{Map.get(params, "language", "unknown")}
+    transcript_length_chars: #{Map.get(result, "transcript_length_chars", 0)}
+    tags: [youtube, transcript, media]
+    ---
+
+    ## Summary
+
+    #{summary}
+
+    ## Transcript
+
+    #{transcript_text}
+    """
+  end
+
+  defp env_enabled?(name), do: env_bool(name, false)
+
+  defp env_bool(name, default) do
+    case System.get_env(name) do
+      nil -> default
+      raw -> String.downcase(String.trim(raw)) in ["1", "true", "yes", "on"]
+    end
+  end
+
+  defp parse_int(raw) when is_binary(raw) do
+    case Integer.parse(String.trim(raw)) do
+      {value, _} -> value
+      :error -> nil
     end
   end
 end

@@ -4,7 +4,7 @@ defmodule BotArmyMediaIngestion.Application do
   @impl true
   def start(_type, _args) do
     children =
-      if Mix.env() == :test do
+      if test_env?() do
         []
       else
         [{BotArmyMediaIngestion.NATS.Consumer, []}]
@@ -14,5 +14,9 @@ defmodule BotArmyMediaIngestion.Application do
       strategy: :one_for_one,
       name: BotArmyMediaIngestion.Supervisor
     )
+  end
+
+  defp test_env? do
+    Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) and Mix.env() == :test
   end
 end
