@@ -81,15 +81,16 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
   defp send_reply(nil, _response), do: :ok
 
   defp send_reply(reply_to, response) do
-    case BotArmyRuntime.NATS.Publisher.publish(reply_to, response) do
-      :ok ->
-        :ok
+    payload =
+      cond do
+        is_binary(response) -> response
+        is_map(response) -> Jason.encode!(response)
+        true -> to_string(response)
+      end
 
-      {:ok, _} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("[MediaIngestion] Failed reply publish: #{inspect(reason)}")
+    with {:ok, conn} <- GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5_000) do
+      headers = BotArmyRuntime.Tracing.inject_trace_context([])
+      Gnat.pub(conn, reply_to, payload, headers: headers)
     end
   end
 
