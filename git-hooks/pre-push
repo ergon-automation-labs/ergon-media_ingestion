@@ -1,120 +1,48 @@
 #!/bin/bash
-# Git pre-push hook for bot_army_media_ingestion
-# Validates compilation and builds release before pushing to GitHub
-# Tests run in Jenkins (not locally)
-# Uses absolute paths since git hooks run in a restricted environment
+# Lightweight git pre-push hook for Bot Army bots
+# Keep push fast/reliable: run quick local validation only.
 
 set -e
 
-# Use absolute path to mix since git hooks have limited environment
 MIX_BIN="/Users/abby/.local/share/mise/shims/mix"
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+export HEX_HOME="$REPO_ROOT/.cache/hex"
+export MIX_HOME="$REPO_ROOT/.cache/mix"
+mkdir -p "$HEX_HOME" "$MIX_HOME"
 
 echo "🔍 Running pre-push checks..."
 echo ""
 
-# One line per ref being pushed: <local ref> <local sha> <remote ref> <remote sha>
-# If the push creates a new remote ref, <remote sha> is forty hex zeros (see githooks(5)).
-read local_ref local_oid remote_ref remote_oid
-if [[ $remote_ref == "refs/heads/main" ]]; then
-  FIRST_PUSH_TO_REF=0
-  if [[ "$remote_oid" == "0000000000000000000000000000000000000000" ]]; then
-    FIRST_PUSH_TO_REF=1
+push_to_main=0
+while read -r local_ref local_oid remote_ref remote_oid; do
+  if [[ $remote_ref == "refs/heads/main" ]]; then
+    push_to_main=1
   fi
+done
 
-  echo "⚠️  Pushing to main branch - validating and building release..."
+if [[ $push_to_main -eq 1 ]]; then
+  echo "⚠️  Pushing to main branch - running fast validation only..."
   echo ""
 
-  # Ensure dependencies are up to date
-  echo "📦 Installing dependencies..."
-  $MIX_BIN deps.get || {
-    echo "❌ Failed to install dependencies"
-    exit 1
-  }
-
-  # Check for compilation issues (quick validation)
-  echo ""
   echo "🔨 Compiling code..."
-  $MIX_BIN compile --force || {
+  "$MIX_BIN" compile --force || {
     echo "❌ Compilation failed - push aborted"
     exit 1
   }
 
-  # Quick linting check (non-blocking)
-  echo ""
-  echo "📝 Running linter..."
-  $MIX_BIN credo --strict || {
-    echo "⚠️  Linting issues found (non-blocking, will fail in CI)"
-  }
-
-  # Run tests (required before release)
   echo ""
   echo "🧪 Running tests..."
-  $MIX_BIN test || {
+  "$MIX_BIN" test || {
     echo "❌ Tests failed - push aborted"
     exit 1
   }
 
-  # Build OTP release
   echo ""
-  echo "📦 Building OTP release..."
-  MIX_ENV=prod $MIX_BIN release --overwrite || {
-    echo "❌ Release build failed - push aborted"
-    exit 1
-  }
-
-  # Pre-push runs *before* the pack is sent. On the first push, GitHub still has an empty
-  # default branch, so `gh release create` often returns HTTP 422 (Repository is empty).
-  if [[ $FIRST_PUSH_TO_REF -eq 1 ]]; then
-    echo ""
-    echo "🌱 First push to origin/main — skipping GitHub release and tarball."
-    echo "   (The remote has no ref yet; release upload is done on the next push to main.)"
-  else
-    # Extract version and create GitHub release
-    echo ""
-    echo "🚀 Publishing release to GitHub..."
-    VERSION=$(cat _build/prod/rel/media_ingestion_bot/releases/start_erl.data | awk '{print $2}')
-    echo "Version: $VERSION"
-
-    # Create tarball
-    tar -czf media_ingestion_bot-$VERSION.tar.gz -C _build/prod/rel media_ingestion_bot/ || {
-      echo "❌ Failed to create tarball"
-      exit 1
-    }
-    echo "✓ Tarball created: media_ingestion_bot-$VERSION.tar.gz"
-
-    # Create GitHub release
-    if gh release view "v$VERSION" >/dev/null 2>&1; then
-      echo "❌ GitHub release v$VERSION already exists."
-      echo "   A prior run may have published the tarball while git push did not complete."
-      echo "   Bump :version in mix.exs, commit, and push again (do not replace published assets)."
-      exit 1
-    fi
-    gh release create "v$VERSION" media_ingestion_bot-$VERSION.tar.gz \
-      --title "Release v$VERSION" \
-      --notes "Media Ingestion Bot Elixir release v$VERSION. Automatically deployed by Jenkins." \
-      --draft=false || {
-      echo "❌ Failed to create GitHub release"
-      exit 1
-    }
-    echo "✓ Release published to GitHub"
-  fi
-
-  # Cleanup build artifacts created by this hook
-  echo ""
-  echo "🧹 Cleaning up local release artifacts..."
-  rm -f ./*.tar.gz
-  rm -rf ./_build
-  echo "✓ Cleanup complete"
-
-  echo ""
-  if [[ $FIRST_PUSH_TO_REF -eq 1 ]]; then
-    echo "✅ All checks passed! (GitHub release will run on your *next* push to main.)"
-  else
-    echo "✅ All checks passed, release built and published!"
-  fi
-  echo "📤 Proceeding with push..."
+  echo "✅ Pre-push checks passed"
+  echo "ℹ️  Publish releases explicitly with: make push-and-publish"
 else
-  echo "ℹ️  Pushing to feature branch - skipping validation"
+  echo "ℹ️  Pushing to feature branch - skipping pre-push validation"
 fi
 
 echo ""
