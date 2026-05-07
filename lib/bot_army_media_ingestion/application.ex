@@ -7,7 +7,7 @@ defmodule BotArmyMediaIngestion.Application do
       if test_env?() do
         []
       else
-        [{BotArmyMediaIngestion.NATS.Consumer, []}]
+        [{BotArmyMediaIngestion.PulsePublisher, []}, {BotArmyMediaIngestion.NATS.Consumer, []}]
       end
 
     Supervisor.start_link(children,
