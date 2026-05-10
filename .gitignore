@@ -3,3 +3,4 @@
 /cover/
 /.elixir_ls/
 erl_crash.dump
+media_ingestion_bot-*.tar.gz

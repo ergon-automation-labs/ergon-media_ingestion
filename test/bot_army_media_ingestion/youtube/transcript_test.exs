@@ -34,4 +34,23 @@ defmodule BotArmyMediaIngestion.YouTube.TranscriptTest do
   after
     System.delete_env("MEDIA_INGESTION_YOUTUBE_TRANSCRIPT_ENDPOINT")
   end
+
+  test "parses transcript rows when HTTP 200 body is a JSON string" do
+    assert {:ok, [%{"text" => "hello", "start" => 1.2}]} =
+             Transcript.parse_response_body(~s([{"text":"hello","start":1.2}]))
+  end
+
+  test "parses transcript rows when HTTP 200 body is transcript XML" do
+    body = ~s(<transcript><text start="0.0" dur="2.0">Hello &amp; goodbye</text></transcript>)
+
+    assert {:ok, [%{"text" => "Hello & goodbye", "start" => "0.0"}]} =
+             Transcript.parse_response_body(body)
+  end
+
+  test "reports a useful snippet for unexpected HTTP 200 body" do
+    assert {:error, reason} = Transcript.parse_response_body("<html>not a transcript</html>")
+
+    assert reason =~ "HTTP 200 unexpected body:"
+    assert reason =~ "not a transcript"
+  end
 end

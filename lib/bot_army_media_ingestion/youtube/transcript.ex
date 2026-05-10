@@ -223,12 +223,83 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
       {:ok, %{status: 200, body: body}} when is_map(body) or is_list(body) ->
         {:ok, body}
 
+      {:ok, %{status: 200, body: body}} when is_binary(body) ->
+        parse_response_body(body)
+
       {:ok, %{status: status}} ->
         {:error, "HTTP #{status}"}
 
       {:error, reason} ->
         {:error, inspect(reason)}
     end
+  end
+
+  @doc false
+  def parse_response_body(body) when is_binary(body) do
+    trimmed = String.trim(body)
+
+    cond do
+      trimmed == "" ->
+        {:error, "HTTP 200 empty body"}
+
+      String.starts_with?(trimmed, ["[", "{"]) ->
+        case Jason.decode(trimmed) do
+          {:ok, decoded} -> {:ok, decoded}
+          {:error, _} -> {:error, "HTTP 200 invalid JSON body: #{body_snippet(trimmed)}"}
+        end
+
+      String.contains?(trimmed, "<text") ->
+        parse_transcript_xml(trimmed)
+
+      true ->
+        {:error, "HTTP 200 unexpected body: #{body_snippet(trimmed)}"}
+    end
+  end
+
+  def parse_response_body(body), do: {:error, "unexpected response body: #{inspect(body)}"}
+
+  defp parse_transcript_xml(body) do
+    rows =
+      ~r/<text\b([^>]*)>(.*?)<\/text>/s
+      |> Regex.scan(body)
+      |> Enum.map(fn [_match, attrs, text] ->
+        %{
+          "start" => xml_attr(attrs, "start"),
+          "text" => text |> strip_xml_tags() |> decode_xml_entities() |> String.trim()
+        }
+      end)
+      |> Enum.reject(&(Map.get(&1, "text") == ""))
+
+    if rows == [] do
+      {:error, "HTTP 200 transcript XML had no text rows"}
+    else
+      {:ok, rows}
+    end
+  end
+
+  defp xml_attr(attrs, name) do
+    case Regex.run(~r/#{Regex.escape(name)}="([^"]*)"/, attrs) do
+      [_match, value] -> value
+      _ -> nil
+    end
+  end
+
+  defp strip_xml_tags(text), do: Regex.replace(~r/<[^>]+>/, text, "")
+
+  defp decode_xml_entities(text) do
+    text
+    |> String.replace("&amp;", "&")
+    |> String.replace("&quot;", "\"")
+    |> String.replace("&#39;", "'")
+    |> String.replace("&apos;", "'")
+    |> String.replace("&lt;", "<")
+    |> String.replace("&gt;", ">")
+  end
+
+  defp body_snippet(body) do
+    body
+    |> String.replace(~r/\s+/, " ")
+    |> String.slice(0, 160)
   end
 
   defp maybe_persist(result, params) do
