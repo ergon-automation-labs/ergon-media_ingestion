@@ -14,7 +14,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   def fetch(params) when is_map(params) do
     with {:ok, youtube_url} <- validate_youtube_url(params),
          {:ok, video_id} <- extract_video_id(youtube_url),
-         {:ok, transcript_rows} <- fetch_transcript_rows(video_id),
+         {:ok, transcript_rows} <- fetch_transcript_rows(video_id, youtube_url),
          {:ok, transcript_text} <- build_transcript_text(transcript_rows, params) do
       result = %{
         "youtube_url" => youtube_url,
@@ -105,7 +105,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
     end
   end
 
-  defp fetch_transcript_rows(video_id) do
+  defp fetch_transcript_rows(video_id, youtube_url) do
     endpoint =
       System.get_env("MEDIA_INGESTION_YOUTUBE_TRANSCRIPT_ENDPOINT", @default_transcript_endpoint)
 
@@ -113,16 +113,118 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
     case http_get_json(url) do
       {:ok, rows} when is_list(rows) and rows != [] ->
-        {:ok, rows}
+        if provider_blocked_rows?(rows) do
+          Logger.info(
+            "[MediaIngestion.YouTube] transcript endpoint blocked; falling back to yt-dlp"
+          )
+
+          fetch_transcript_rows_with_ytdlp(youtube_url)
+        else
+          {:ok, rows}
+        end
 
       {:ok, []} ->
-        {:error, "transcript unavailable for this video"}
+        fetch_transcript_rows_with_ytdlp(youtube_url)
 
       {:ok, _} ->
-        {:error, "unexpected transcript response shape"}
+        fetch_transcript_rows_with_ytdlp(youtube_url)
 
       {:error, reason} ->
-        {:error, "transcript lookup failed: #{reason}"}
+        case fetch_transcript_rows_with_ytdlp(youtube_url) do
+          {:ok, rows} -> {:ok, rows}
+          {:error, fallback_reason} -> transcript_lookup_error(reason, fallback_reason)
+        end
+    end
+  end
+
+  defp transcript_lookup_error(reason, fallback_reason) do
+    {:error, "transcript lookup failed: #{reason}; yt-dlp fallback failed: #{fallback_reason}"}
+  end
+
+  defp provider_blocked_rows?(rows) do
+    rows
+    |> Enum.map(&Map.get(&1, "text", ""))
+    |> Enum.any?(fn text ->
+      normalized = String.downcase(to_string(text))
+
+      String.contains?(normalized, "youtube is currently blocking") or
+        String.contains?(normalized, "blocking us from fetching subtitles")
+    end)
+  end
+
+  defp fetch_transcript_rows_with_ytdlp(youtube_url) do
+    if env_bool("MEDIA_INGESTION_YTDLP_ENABLED", true) do
+      do_fetch_transcript_rows_with_ytdlp(youtube_url)
+    else
+      {:error, "yt-dlp fallback disabled"}
+    end
+  end
+
+  defp do_fetch_transcript_rows_with_ytdlp(youtube_url) do
+    bin = System.get_env("MEDIA_INGESTION_YTDLP_BIN", "yt-dlp")
+
+    tmp_dir =
+      Path.join(System.tmp_dir!(), "media_ingestion_ytdlp_#{System.unique_integer([:positive])}")
+
+    try do
+      with :ok <- File.mkdir_p(tmp_dir),
+           {output, 0} <- run_ytdlp(bin, youtube_url, tmp_dir),
+           {:ok, rows} <- read_ytdlp_subtitle_rows(tmp_dir, output) do
+        {:ok, rows}
+      else
+        {:error, reason} ->
+          {:error, reason}
+
+        {output, status} ->
+          {:error, "yt-dlp exited #{status}: #{body_snippet(output)}"}
+      end
+    after
+      File.rm_rf(tmp_dir)
+    end
+  rescue
+    e in ErlangError ->
+      {:error, "yt-dlp execution failed: #{inspect(e.original)}"}
+  end
+
+  defp run_ytdlp(bin, youtube_url, tmp_dir) do
+    args = [
+      "--skip-download",
+      "--write-subs",
+      "--write-auto-subs",
+      "--sub-langs",
+      System.get_env("MEDIA_INGESTION_YTDLP_SUB_LANGS", "en.*"),
+      "--sub-format",
+      "vtt",
+      "--output",
+      "%(id)s.%(ext)s",
+      youtube_url
+    ]
+
+    System.cmd(bin, args, cd: tmp_dir, stderr_to_stdout: true)
+  end
+
+  defp read_ytdlp_subtitle_rows(tmp_dir, output) do
+    tmp_dir
+    |> Path.join("*.vtt")
+    |> Path.wildcard()
+    |> Enum.sort()
+    |> case do
+      [] ->
+        {:error, "yt-dlp produced no VTT subtitles: #{body_snippet(output)}"}
+
+      paths ->
+        paths
+        |> Enum.map(&File.read!/1)
+        |> Enum.reduce_while([], fn body, acc ->
+          case parse_vtt_transcript(body) do
+            {:ok, rows} -> {:halt, rows}
+            {:error, _reason} -> {:cont, acc}
+          end
+        end)
+        |> case do
+          [] -> {:error, "yt-dlp subtitles had no text rows"}
+          rows -> {:ok, rows}
+        end
     end
   end
 
@@ -257,6 +359,86 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   end
 
   def parse_response_body(body), do: {:error, "unexpected response body: #{inspect(body)}"}
+
+  @doc false
+  def parse_vtt_transcript(body) when is_binary(body) do
+    rows =
+      body
+      |> String.replace("\r\n", "\n")
+      |> String.replace("\r", "\n")
+      |> String.split(~r/\n\s*\n/)
+      |> Enum.flat_map(&parse_vtt_cue/1)
+
+    if rows == [] do
+      {:error, "VTT had no text rows"}
+    else
+      {:ok, rows}
+    end
+  end
+
+  def parse_vtt_transcript(body), do: {:error, "unexpected VTT body: #{inspect(body)}"}
+
+  defp parse_vtt_cue(cue) do
+    lines =
+      cue
+      |> String.split(["\n", "\r\n"], trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    timestamp_index = Enum.find_index(lines, &String.contains?(&1, "-->"))
+
+    if is_integer(timestamp_index) do
+      timestamp_line = Enum.at(lines, timestamp_index)
+      text = lines |> Enum.drop(timestamp_index + 1) |> clean_vtt_text()
+
+      case text do
+        "" -> []
+        value -> [%{"start" => vtt_start(timestamp_line), "text" => value}]
+      end
+    else
+      []
+    end
+  end
+
+  defp clean_vtt_text(lines) do
+    lines
+    |> Enum.reject(&vtt_metadata_line?/1)
+    |> Enum.map(&strip_xml_tags/1)
+    |> Enum.map(&decode_xml_entities/1)
+    |> Enum.join(" ")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  defp vtt_metadata_line?("WEBVTT" <> _), do: true
+  defp vtt_metadata_line?("Kind:" <> _), do: true
+  defp vtt_metadata_line?("Language:" <> _), do: true
+  defp vtt_metadata_line?("NOTE" <> _), do: true
+  defp vtt_metadata_line?("STYLE" <> _), do: true
+  defp vtt_metadata_line?(_), do: false
+
+  defp vtt_start(timestamp_line) do
+    timestamp_line
+    |> String.split("-->", parts: 2)
+    |> List.first()
+    |> to_string()
+    |> String.trim()
+    |> vtt_timestamp_seconds()
+  end
+
+  defp vtt_timestamp_seconds(timestamp) do
+    parts = String.split(timestamp, ":")
+
+    parts
+    |> Enum.reverse()
+    |> Enum.with_index()
+    |> Enum.reduce(0.0, fn {part, index}, acc ->
+      case Float.parse(part) do
+        {value, _} -> acc + value * :math.pow(60, index)
+        :error -> acc
+      end
+    end)
+  end
 
   defp parse_transcript_xml(body) do
     rows =

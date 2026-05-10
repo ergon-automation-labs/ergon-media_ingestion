@@ -53,4 +53,24 @@ defmodule BotArmyMediaIngestion.YouTube.TranscriptTest do
     assert reason =~ "HTTP 200 unexpected body:"
     assert reason =~ "not a transcript"
   end
+
+  test "parses yt-dlp VTT subtitle output" do
+    body = """
+    WEBVTT
+    Kind: captions
+    Language: en
+
+    00:00:01.000 --> 00:00:03.500
+    <c>Hello</c> &amp; welcome
+
+    00:00:04.000 --> 00:00:06.000
+    to the show
+    """
+
+    assert {:ok,
+            [
+              %{"start" => 1.0, "text" => "Hello & welcome"},
+              %{"start" => 4.0, "text" => "to the show"}
+            ]} = Transcript.parse_vtt_transcript(body)
+  end
 end
