@@ -127,7 +127,7 @@ defmodule BotArmyMediaIngestion.Skills.Example do
        }}
     rescue
       e ->
-        Logger.error("[Example] Execution failed", error: inspect(e))
+        Logger.error("[Example] Execution failed: #{inspect(e)}")
         {:error, :execution_failed}
     end
   end
