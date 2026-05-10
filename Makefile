@@ -104,17 +104,12 @@ publish-release: release
 	@echo "==============================================="
 	@echo ""
 
-	# Get version from mix.exs. Elixir 1.18 release metadata no longer writes RELEASES here.
-	VERSION=$$(awk -F'"' '/version:/ {print $$2; exit}' mix.exs); \
+	@VERSION=$$(awk -F'"' '/version:/ {print $$2; exit}' mix.exs); \
 	echo "Version: $$VERSION"; \
-	\
-	# Create tarball
 	echo "Creating release tarball..."; \
 	tar -czf media_ingestion_bot-$$VERSION.tar.gz -C _build/prod/rel media_ingestion_bot/; \
 	echo "✓ Tarball created: media_ingestion_bot-$$VERSION.tar.gz"; \
 	echo ""; \
-	\
-	# Create GitHub release
 	echo "Creating GitHub release v$$VERSION..."; \
 	gh release create v$$VERSION media_ingestion_bot-$$VERSION.tar.gz \
 		--title "Release v$$VERSION" \
