@@ -168,15 +168,12 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
     try do
       with :ok <- File.mkdir_p(tmp_dir),
-           {output, 0} <- run_ytdlp(bin, youtube_url, tmp_dir),
-           {:ok, rows} <- read_ytdlp_subtitle_rows(tmp_dir, output) do
+           {output, status} <- run_ytdlp(bin, youtube_url, tmp_dir),
+           {:ok, rows} <- read_ytdlp_subtitle_rows(tmp_dir, output, status) do
         {:ok, rows}
       else
         {:error, reason} ->
           {:error, reason}
-
-        {output, status} ->
-          {:error, "yt-dlp exited #{status}: #{body_snippet(output)}"}
       end
     after
       File.rm_rf(tmp_dir)
@@ -192,7 +189,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
       "--write-subs",
       "--write-auto-subs",
       "--sub-langs",
-      System.get_env("MEDIA_INGESTION_YTDLP_SUB_LANGS", "en.*"),
+      System.get_env("MEDIA_INGESTION_YTDLP_SUB_LANGS", "en"),
       "--sub-format",
       "vtt",
       "--output",
@@ -203,14 +200,21 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
     System.cmd(bin, args, cd: tmp_dir, stderr_to_stdout: true)
   end
 
-  defp read_ytdlp_subtitle_rows(tmp_dir, output) do
+  defp read_ytdlp_subtitle_rows(tmp_dir, output, status) do
     tmp_dir
     |> Path.join("*.vtt")
     |> Path.wildcard()
     |> Enum.sort()
     |> case do
       [] ->
-        {:error, "yt-dlp produced no VTT subtitles: #{body_snippet(output)}"}
+        reason =
+          if status == 0 do
+            "yt-dlp produced no VTT subtitles"
+          else
+            "yt-dlp exited #{status} and produced no VTT subtitles"
+          end
+
+        {:error, "#{reason}: #{body_snippet(output)}"}
 
       paths ->
         paths
