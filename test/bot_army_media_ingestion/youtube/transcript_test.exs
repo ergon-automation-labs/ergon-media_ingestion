@@ -78,6 +78,19 @@ defmodule BotArmyMediaIngestion.YouTube.TranscriptTest do
             ]} = Transcript.parse_vtt_transcript(body)
   end
 
+  test "uses the youtube inbox subdirectory under the transcript store root" do
+    assert Transcript.transcript_store_path_for_test("/Users/abby/Documents/personal_os") ==
+             "/Users/abby/Documents/personal_os/resources/Youtube_videos/inbox"
+
+    assert Transcript.transcript_store_path_for_test(
+             "/tmp/root",
+             "resources/Youtube_videos/inbox"
+           ) ==
+             "/tmp/root/resources/Youtube_videos/inbox"
+
+    assert Transcript.transcript_store_path_for_test("/tmp/root", "") == "/tmp/root"
+  end
+
   test "collapses rolling auto-caption VTT cues into readable transcript text" do
     body = """
     WEBVTT

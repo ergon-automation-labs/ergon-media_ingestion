@@ -10,6 +10,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   @default_store_mode "markdown"
   @default_include_full_text true
   @default_max_chars 200_000
+  @default_transcript_store_subdir "resources/Youtube_videos/inbox"
 
   @spec fetch(map()) :: {:ok, map()} | {:error, String.t()}
   def fetch(params) when is_map(params) do
@@ -42,6 +43,10 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
   @doc false
   def build_transcript_text_for_test(rows, params), do: build_transcript_text(rows, params)
+
+  @doc false
+  def transcript_store_path_for_test(root, subdir \\ nil),
+    do: transcript_store_directory(root, subdir)
 
   defp validate_youtube_url(params) do
     case Map.get(params, "youtube_url") do
@@ -599,6 +604,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   defp persist_transcript_markdown(result, params) do
     root = System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_ROOT", "")
     mode = System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_MODE", @default_store_mode)
+    store_dir = transcript_store_directory(root)
 
     include_full_text =
       env_bool("MEDIA_INGESTION_TRANSCRIPT_INCLUDE_FULL_TEXT", @default_include_full_text)
@@ -618,10 +624,10 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
       true ->
         filename = build_filename(result)
-        path = Path.join(root, filename)
+        path = Path.join(store_dir, filename)
         body = build_markdown_body(result, params, include_full_text, max_chars)
 
-        with :ok <- File.mkdir_p(root),
+        with :ok <- File.mkdir_p(store_dir),
              :ok <- File.write(path, body) do
           {:ok,
            %{
@@ -629,6 +635,27 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
              "stored_path" => path,
              "stored_bytes" => byte_size(body)
            }}
+        end
+    end
+  end
+
+  defp transcript_store_directory(root, subdir \\ :env) do
+    trimmed_root = String.trim(root)
+
+    resolved_subdir =
+      case subdir do
+        :env -> System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_SUBDIR")
+        value -> value
+      end
+
+    case resolved_subdir do
+      nil ->
+        Path.join(trimmed_root, @default_transcript_store_subdir)
+
+      subdir when is_binary(subdir) ->
+        case String.trim(subdir) do
+          "" -> trimmed_root
+          value -> Path.join(trimmed_root, value)
         end
     end
   end
