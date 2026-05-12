@@ -9,6 +9,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   @default_oembed_endpoint "https://www.youtube.com/oembed?format=json&url="
   @default_store_mode "markdown"
   @default_include_full_text true
+  @default_max_chars 200_000
 
   @spec fetch(map()) :: {:ok, map()} | {:error, String.t()}
   def fetch(params) when is_map(params) do
@@ -310,11 +311,9 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
     end
   end
 
-  defp normalize_max_chars(nil), do: nil
+  defp normalize_max_chars(nil), do: @default_max_chars
   defp normalize_max_chars(value) when is_integer(value) and value > 0, do: value
-  defp normalize_max_chars(_), do: nil
-
-  defp truncate_text(text, nil), do: text
+  defp normalize_max_chars(_), do: @default_max_chars
 
   defp truncate_text(text, max_chars) do
     if String.length(text) <= max_chars do
@@ -520,7 +519,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
     max_chars =
       case System.get_env("MEDIA_INGESTION_TRANSCRIPT_MAX_CHARS") do
-        nil -> nil
+        nil -> @default_max_chars
         raw -> normalize_max_chars(parse_int(raw))
       end
 
@@ -563,7 +562,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
         include_full_text and is_integer(max_chars) -> truncate_text(transcript_text, max_chars)
         include_full_text -> transcript_text
         is_integer(max_chars) -> truncate_text(transcript_text, max_chars)
-        true -> truncate_text(transcript_text, 5_000)
+        true -> truncate_text(transcript_text, @default_max_chars)
       end
 
     summary =
