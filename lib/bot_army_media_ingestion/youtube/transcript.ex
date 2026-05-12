@@ -40,6 +40,9 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
   def fetch(_), do: {:error, "invalid request"}
 
+  @doc false
+  def build_transcript_text_for_test(rows, params), do: build_transcript_text(rows, params)
+
   defp validate_youtube_url(params) do
     case Map.get(params, "youtube_url") do
       url when is_binary(url) ->
@@ -257,11 +260,94 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
     lines =
       rows
+      |> collapse_rolling_vtt_rows()
       |> Enum.map(&normalize_row_text(&1, include_timestamps))
       |> Enum.reject(&(&1 == ""))
 
-    text = Enum.join(lines, "\n")
+    separator = if include_timestamps, do: "\n", else: " "
+    text = Enum.join(lines, separator)
     {:ok, truncate_text(text, max_chars)}
+  end
+
+  defp collapse_rolling_vtt_rows(rows) do
+    merged_texts =
+      rows
+      |> Enum.map(&normalize_row_text(&1, false))
+      |> Enum.reject(&(&1 == ""))
+      |> merge_rolling_transcript_texts()
+
+    case {rows, merged_texts} do
+      {[], _} ->
+        []
+
+      {rows, [text]} ->
+        [Map.put(List.first(rows), "text", text)]
+
+      {rows, merged_texts} ->
+        first_row = List.first(rows)
+
+        Enum.map(merged_texts, fn text ->
+          Map.put(first_row, "text", text)
+        end)
+    end
+  end
+
+  defp merge_rolling_transcript_texts(texts) do
+    Enum.reduce(texts, [], fn text, acc ->
+      case acc do
+        [] ->
+          [text]
+
+        acc ->
+          last = List.last(acc)
+
+          cond do
+            text == last ->
+              acc
+
+            String.starts_with?(text, last) ->
+              List.replace_at(acc, length(acc) - 1, text)
+
+            String.contains?(last, text) ->
+              acc
+
+            String.contains?(text, last) ->
+              List.replace_at(acc, length(acc) - 1, text)
+
+            true ->
+              overlap = longest_suffix_prefix_overlap(last, text)
+
+              if overlap > 0 do
+                List.replace_at(
+                  acc,
+                  length(acc) - 1,
+                  last <> String.slice(text, overlap, String.length(text) - overlap)
+                )
+              else
+                acc ++ [text]
+              end
+          end
+      end
+    end)
+  end
+
+  defp longest_suffix_prefix_overlap(left, right) do
+    left
+    |> String.length()
+    |> min(String.length(right))
+    |> overlapping_suffix_prefix_size(left, right)
+  end
+
+  defp overlapping_suffix_prefix_size(0, _left, _right), do: 0
+
+  defp overlapping_suffix_prefix_size(size, left, right) do
+    suffix = String.slice(left, String.length(left) - size, size)
+
+    if String.starts_with?(right, suffix) do
+      size
+    else
+      overlapping_suffix_prefix_size(size - 1, left, right)
+    end
   end
 
   defp normalize_row_text(%{"text" => text} = row, include_timestamps) when is_binary(text) do

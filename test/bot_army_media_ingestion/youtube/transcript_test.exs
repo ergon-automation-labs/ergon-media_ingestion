@@ -77,4 +77,38 @@ defmodule BotArmyMediaIngestion.YouTube.TranscriptTest do
               %{"start" => 4.0, "text" => "to the show"}
             ]} = Transcript.parse_vtt_transcript(body)
   end
+
+  test "collapses rolling auto-caption VTT cues into readable transcript text" do
+    body = """
+    WEBVTT
+    Kind: captions
+    Language: en
+
+    00:00:00.080 --> 00:00:02.310 align:start position:0%
+
+    A<00:00:00.320><c> few</c><00:00:00.480><c> weeks</c><00:00:00.640><c> ago,</c><00:00:01.199><c> I</c><00:00:01.439><c> caught</c><00:00:01.680><c> myself</c><00:00:02.080><c> doing</c>
+
+    00:00:02.310 --> 00:00:02.320 align:start position:0%
+    A few weeks ago, I caught myself doing
+
+    00:00:02.320 --> 00:00:05.030 align:start position:0%
+    A few weeks ago, I caught myself doing
+    something<00:00:02.960><c> weird.</c><00:00:03.760><c> It</c><00:00:03.919><c> was</c><00:00:04.000><c> Sunday</c><00:00:04.319><c> night,</c><00:00:04.799><c> my</c>
+
+    00:00:05.030 --> 00:00:05.040 align:start position:0%
+    something weird. It was Sunday night, my
+
+    00:00:05.040 --> 00:00:06.789 align:start position:0%
+    something weird. It was Sunday night, my
+    laptop<00:00:05.359><c> was</c><00:00:05.600><c> open,</c><00:00:05.920><c> and</c><00:00:06.160><c> Claude</c><00:00:06.560><c> was</c>
+    """
+
+    assert {:ok, rows} = Transcript.parse_vtt_transcript(body)
+
+    assert {:ok, text} =
+             Transcript.build_transcript_text_for_test(rows, %{"include_timestamps" => false})
+
+    assert text ==
+             "A few weeks ago, I caught myself doing something weird. It was Sunday night, my laptop was open, and Claude was"
+  end
 end
