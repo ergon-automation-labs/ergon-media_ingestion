@@ -4,7 +4,7 @@ defmodule BotArmyMediaIngestion.MixProject do
   def project do
     [
       app: :bot_army_media_ingestion,
-      version: "0.1.15",
+      version: "0.1.16",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
