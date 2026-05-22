@@ -1,4 +1,5 @@
 defmodule BotArmyMediaIngestion.Application do
+  @moduledoc "OTP Application for the Media Ingestion bot. Handles YouTube transcripts and audio pipelines."
   use Application
 
   @env Mix.env()

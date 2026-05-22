@@ -1,4 +1,5 @@
 defmodule BotArmyMediaIngestion.NATS.Consumer do
+  @moduledoc "NATS consumer for media ingestion requests (YouTube transcripts, audio)."
   use GenServer
   require Logger
 

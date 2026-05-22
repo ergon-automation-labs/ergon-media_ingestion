@@ -498,8 +498,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
     lines
     |> Enum.reject(&vtt_metadata_line?/1)
     |> Enum.map(&strip_xml_tags/1)
-    |> Enum.map(&decode_xml_entities/1)
-    |> Enum.join(" ")
+    |> Enum.map_join(" ", &decode_xml_entities/1)
     |> String.replace(~r/\s+/, " ")
     |> String.trim()
   end
@@ -661,7 +660,15 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   end
 
   defp build_filename(result) do
-    video_id = Map.get(result, "video_id", "unknown")
+    video_id =
+      result
+      |> Map.get("video_id", "unknown")
+      |> to_string()
+      |> String.replace(~r/[\/\\]+/, "_")
+      |> String.replace(~r/[^A-Za-z0-9._-]+/, "_")
+      |> String.trim("_")
+
+    video_id = if video_id == "", do: "unknown", else: video_id
     timestamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%dT%H%M%SZ")
     "#{timestamp}_#{video_id}.md"
   end
