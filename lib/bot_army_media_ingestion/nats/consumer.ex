@@ -22,7 +22,16 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
   def init(_opts) do
     with {:ok, conn} <- GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5_000),
          {:ok, sub} <- Gnat.sub(conn, self(), @subject) do
-      BotArmyRuntime.Registry.register("media_ingestion", @subjects, app_version())
+      deployment_status =
+        Application.get_env(:bot_army_media_ingestion, :deployment_status, "deployed")
+
+      BotArmyRuntime.Registry.register(
+        "media_ingestion",
+        @subjects,
+        app_version(),
+        deployment_status
+      )
+
       Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
 
       {:ok, %{conn: conn, sub: sub, registry_registered?: true}}
@@ -53,7 +62,16 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
   @impl true
   def handle_info(:registry_heartbeat, state) do
     if state.registry_registered? do
-      BotArmyRuntime.Registry.register("media_ingestion", @subjects, app_version())
+      deployment_status =
+        Application.get_env(:bot_army_media_ingestion, :deployment_status, "deployed")
+
+      BotArmyRuntime.Registry.register(
+        "media_ingestion",
+        @subjects,
+        app_version(),
+        deployment_status
+      )
+
       Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
     end
 
