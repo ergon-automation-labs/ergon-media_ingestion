@@ -20,12 +20,12 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
 
   @impl true
   def init(_opts) do
-    with {:ok, conn} <- GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5_000),
+    with {:ok, conn} <- GenServer.call(BotArmyLibraryRuntime.NATS.Connection, :get_connection, 5_000),
          {:ok, sub} <- Gnat.sub(conn, self(), @subject) do
       deployment_status =
         Application.get_env(:bot_army_media_ingestion, :deployment_status, "deployed")
 
-      BotArmyRuntime.Registry.register(
+      BotArmyLibraryRuntime.Registry.register(
         "media_ingestion",
         @subjects,
         app_version(),
@@ -44,13 +44,13 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
 
   @impl true
   def handle_info({:msg, msg}, state) do
-    BotArmyRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers, []), fn ->
+    BotArmyLibraryRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers, []), fn ->
       params = decode_payload(msg.body)
 
       response =
         case Transcript.fetch(params) do
-          {:ok, data} -> BotArmyRuntime.NATS.Reply.ok(data)
-          {:error, reason} -> BotArmyRuntime.NATS.Reply.error(reason, :validation_error)
+          {:ok, data} -> BotArmyLibraryRuntime.NATS.Reply.ok(data)
+          {:error, reason} -> BotArmyLibraryRuntime.NATS.Reply.error(reason, :validation_error)
         end
 
       send_reply(msg.reply_to, response)
@@ -65,7 +65,7 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
       deployment_status =
         Application.get_env(:bot_army_media_ingestion, :deployment_status, "deployed")
 
-      BotArmyRuntime.Registry.register(
+      BotArmyLibraryRuntime.Registry.register(
         "media_ingestion",
         @subjects,
         app_version(),
@@ -82,7 +82,7 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
   def handle_info(_msg, state), do: {:noreply, state}
 
   defp decode_payload(body) when is_binary(body) do
-    case BotArmyCore.NATS.Decoder.decode(body) do
+    case BotArmyLibraryCore.NATS.Decoder.decode(body) do
       {:ok, %{"payload" => payload}} when is_map(payload) ->
         payload
 
@@ -107,8 +107,8 @@ defmodule BotArmyMediaIngestion.NATS.Consumer do
         true -> to_string(response)
       end
 
-    with {:ok, conn} <- GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5_000) do
-      headers = BotArmyRuntime.Tracing.inject_trace_context([])
+    with {:ok, conn} <- GenServer.call(BotArmyLibraryRuntime.NATS.Connection, :get_connection, 5_000) do
+      headers = BotArmyLibraryRuntime.Tracing.inject_trace_context([])
       Gnat.pub(conn, reply_to, payload, headers: headers)
     end
   end
