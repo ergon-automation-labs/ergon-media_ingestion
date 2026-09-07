@@ -6,6 +6,10 @@ defmodule BotArmyMediaIngestion.Application do
 
   @impl true
   def start(_type, _args) do
+    # Load config from file (deployed by Salt) into the runtime library's state
+    config_data = BotArmyLibraryRuntime.ConfigLoader.load_config()
+    Application.put_env(:bot_army_library_runtime, :config_data, config_data)
+
     children =
       if @env == :test do
         []

@@ -116,7 +116,10 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
   defp fetch_transcript_rows(video_id, youtube_url) do
     endpoint =
-      System.get_env("MEDIA_INGESTION_YOUTUBE_TRANSCRIPT_ENDPOINT", @default_transcript_endpoint)
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "MEDIA_INGESTION_YOUTUBE_TRANSCRIPT_ENDPOINT",
+        @default_transcript_endpoint
+      )
 
     url = endpoint <> URI.encode(video_id)
 
@@ -170,7 +173,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   end
 
   defp do_fetch_transcript_rows_with_ytdlp(youtube_url) do
-    bin = System.get_env("MEDIA_INGESTION_YTDLP_BIN", "yt-dlp")
+    bin = BotArmyLibraryRuntime.ConfigLoader.get("MEDIA_INGESTION_YTDLP_BIN", "yt-dlp")
 
     tmp_dir =
       Path.join(System.tmp_dir!(), "media_ingestion_ytdlp_#{System.unique_integer([:positive])}")
@@ -182,6 +185,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
         {:ok, rows}
       else
         {:error, reason} ->
+          Logger.error("[MediaIngestion.YouTube] yt-dlp failed: #{inspect(reason)}")
           {:error, reason}
       end
     after
@@ -197,8 +201,9 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
       "--skip-download",
       "--write-subs",
       "--write-auto-subs",
+      "--no-cache-dir",
       "--sub-langs",
-      System.get_env("MEDIA_INGESTION_YTDLP_SUB_LANGS", "en"),
+      BotArmyLibraryRuntime.ConfigLoader.get("MEDIA_INGESTION_YTDLP_SUB_LANGS", "en"),
       "--sub-format",
       "vtt",
       "--output",
@@ -242,7 +247,12 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   end
 
   defp fetch_video_metadata(youtube_url) do
-    endpoint = System.get_env("MEDIA_INGESTION_YOUTUBE_OEMBED_ENDPOINT", @default_oembed_endpoint)
+    endpoint =
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "MEDIA_INGESTION_YOUTUBE_OEMBED_ENDPOINT",
+        @default_oembed_endpoint
+      )
+
     url = endpoint <> URI.encode(youtube_url)
 
     case http_get_json(url) do
@@ -601,15 +611,21 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   end
 
   defp persist_transcript_markdown(result, params) do
-    root = System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_ROOT", "")
-    mode = System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_MODE", @default_store_mode)
+    root = BotArmyLibraryRuntime.ConfigLoader.get("MEDIA_INGESTION_TRANSCRIPT_STORE_ROOT", "")
+
+    mode =
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "MEDIA_INGESTION_TRANSCRIPT_STORE_MODE",
+        @default_store_mode
+      )
+
     store_dir = transcript_store_directory(root)
 
     include_full_text =
       env_bool("MEDIA_INGESTION_TRANSCRIPT_INCLUDE_FULL_TEXT", @default_include_full_text)
 
     max_chars =
-      case System.get_env("MEDIA_INGESTION_TRANSCRIPT_MAX_CHARS") do
+      case BotArmyLibraryRuntime.ConfigLoader.get("MEDIA_INGESTION_TRANSCRIPT_MAX_CHARS") do
         nil -> @default_max_chars
         raw -> normalize_max_chars(parse_int(raw))
       end
@@ -643,7 +659,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
 
     resolved_subdir =
       case subdir do
-        :env -> System.get_env("MEDIA_INGESTION_TRANSCRIPT_STORE_SUBDIR")
+        :env -> BotArmyLibraryRuntime.ConfigLoader.get("MEDIA_INGESTION_TRANSCRIPT_STORE_SUBDIR")
         value -> value
       end
 
@@ -718,7 +734,7 @@ defmodule BotArmyMediaIngestion.YouTube.Transcript do
   defp env_enabled?(name), do: env_bool(name, false)
 
   defp env_bool(name, default) do
-    case System.get_env(name) do
+    case BotArmyLibraryRuntime.ConfigLoader.get(name) do
       nil -> default
       raw -> String.downcase(String.trim(raw)) in ["1", "true", "yes", "on"]
     end

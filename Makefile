@@ -1,7 +1,7 @@
 SCRIPTS_DIRECTORY ?= $(abspath $(CURDIR)/../scripts)
 MIX ?= /Users/abby/.local/share/mise/shims/mix
 
-.PHONY: setup help deps test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs push-and-publish bump-version
+.PHONY: setup help deps test dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs push-and-publish
 
 help:
 	@echo "Media Ingestion Bot"
@@ -62,7 +62,7 @@ reset-db:
 init:
 	@if [ ! -d .git ]; then git init; echo "Git initialized."; else echo "Git already initialized."; fi
 
-compile:
+_compile-impl:
 	@LOG_FILE="/tmp/compile-ingestion-$$(date +%s).log"; \
 	echo "Compiling ingestion and logging to $$LOG_FILE..."; \
 	$(MIX) compile 2>&1 | tee "$$LOG_FILE"; \
@@ -71,17 +71,8 @@ compile:
 deps:
 	$(MIX) deps.get
 
-compile:
-	@LOG_FILE="/tmp/compile-ingestion-$$(date +%s).log"; \
-	echo "Compiling ingestion and logging to $$LOG_FILE..."; \
-	$(MIX) compile 2>&1 | tee "$$LOG_FILE"; \
-	echo "✓ Compilation log: $$LOG_FILE"
-
 test:
 	$(MIX) test
-
-credo:
-	$(MIX) credo --only warning
 
 dialyzer: deps
 	$(MIX) dialyzer
@@ -141,19 +132,12 @@ push-and-publish:
 logs:
 	@$(SCRIPTS_DIRECTORY)/tail_bot_log.sh
 
-bump-version:
-	@if [ -z "$(BUMP)" ]; then echo "Usage: make bump-version BUMP=major|minor|patch"; exit 1; fi
-	@OLD=$$(grep 'version:' mix.exs | head -1 | sed -E 's/.*version: "([^"]+)".*/\1/'); \
-	bash $(SCRIPTS_DIRECTORY)/bump_version.sh mix.exs $(BUMP) > /dev/null; \
-	NEW=$$(grep 'version:' mix.exs | head -1 | sed -E 's/.*version: "([^"]+)".*/\1/'); \
-	echo "✓ Bumped: $$OLD → $$NEW"
 
-push: test compile credo
-	@echo "✅ All validations passed"
-	@echo "$$(date +%s)" > .push-validated
-	@echo "✓ Proof-of-validation created"
-	@$(MAKE) git-push
-
-
-git-push:
-	@git push origin main 2>&1 | tail -3
+# Shared targets (push, credo, pre-push-cleanup, bump-version, git-push).
+# Defined once in bot_army_infra so they cannot drift per repo.
+BOT_ARMY_COMMON_MK := $(abspath $(CURDIR)/../bot_army_infra/make/common.mk)
+ifeq ($(wildcard $(BOT_ARMY_COMMON_MK)),)
+$(warning bot_army_infra not found at $(BOT_ARMY_COMMON_MK) - shared targets unavailable)
+else
+include $(BOT_ARMY_COMMON_MK)
+endif
